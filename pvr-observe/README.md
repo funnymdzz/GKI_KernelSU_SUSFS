@@ -1,6 +1,16 @@
 # PVR bridge observer, phase 1
 
-Status: the bridge-only revision from cloud run 38376250065 booted temporarily on the device; root and Droidspaces were confirmed by the user, and a Minecraft bridge window was decoded without record loss. The newer opt-in command-snapshot extension below is SOURCE ONLY: not yet cloud-built or device-tested. Neither revision establishes complete replay or fixes the DCE fault.
+Status: bridge-only run 38376250065 and command-snapshot run 38412335488 booted temporarily; root and Droidspaces were confirmed. Command capture includes a verified correct vendor triangle. New indirect/CCB/KCCB/PMR probe extensions are pending cloud and device acceptance. No revision establishes complete replay or fixes the DCE fault.
+
+## New default-off extensions
+
+`indirect on|off` on the existing control selects a separate v3 stream for all kick pointer spans, context/framework buffers, PMR mapping-table/annotation and sparse page-index arrays. Supported schemas are in `pvr_observe_indirect.h`; unsupported calls and loss are counted explicitly. PMR metadata is not PMR contents.
+
+Separate `probe_control` and `extra_control` accept `config HOST_TGID SLOTS OFFLINE_SHA256 LOADED_SRCVERSION`, `start`, `stop`, `reset`. No probes are installed at boot. Both gate the known module artifact's offline SHA attestation plus actual loaded owner/name/srcversion; the kernel does not hash loaded module text. Missing srcversion fails closed. A module reference is held until probes are drained/unregistered.
+
+`probes` contains bounded PRE_RELEASE client-CCB/helper snapshots. `publish` captures valid KCCB slot bytes after write-index stores at the verified pinned-module instruction point, before the next barrier. `extra` contains KCCB candidate entry metadata and bounded successful existing PMR CPU-map return snapshots. None proves firmware consumption. Probe copies admit direct-map RAM only and reject IO/vmap aliases; missing bytes remain flagged. Buffers are preallocated and handlers never call PMR acquisition or read GPU registers.
+
+These controls are independent: stop all enabled channels before export/reset. Coordinate an exclusive window with other users, including the clean-room process. Do not reconfigure shared live captures. New binary layouts are defined in the headers; device decode/acceptance is still pending.
 
 ## Boundaries
 

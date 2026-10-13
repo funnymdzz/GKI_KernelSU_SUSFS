@@ -43,7 +43,7 @@ def generate(common):
         raise ValueError("observer already integrated")
     changes.append(("fs/Makefile", makefile,
                     makefile + "\nobj-$(CONFIG_DEBUG_FS) += pvr_observe.o\n"))
-    for name in ("pvr_observe.c", "pvr_observe.h"):
+    for name in ("pvr_observe.c", "pvr_observe.h", "pvr_observe_indirect.h", "pvr_observe_probes.h", "pvr_observe_probe_control.h", "pvr_observe_publish.h", "pvr_observe_extra_probes.h", "pvr_observe_extra_control.h"):
         if (common / "fs" / name).exists():
             raise ValueError(f"destination already exists: {name}")
         changes.append((f"fs/{name}", "", Path(__file__).with_name(name).read_text()))
