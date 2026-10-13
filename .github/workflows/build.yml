@@ -7,6 +7,10 @@ permissions:
 on:
   workflow_call:
     inputs:
+      pvr_observe:
+        required: false
+        type: boolean
+        default: false
       # ==================== 基础配置 ====================
       android_version:
         required: true
@@ -455,6 +459,16 @@ jobs:
 
           echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
           echo "TAG_FALLBACK=$TAG_FALLBACK" >> $GITHUB_ENV
+
+      - name: Pin PVR observation common source
+        if: inputs.pvr_observe
+        run: |
+          set -euo pipefail
+          test '${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}' = 'android15-6.6-127'
+          COMMON_REV=9219fdbf541af7cadec566a17df0c3e6b1a0be52
+          git -C "$KERNEL_ROOT/common" fetch --depth=1 origin "$COMMON_REV"
+          git -C "$KERNEL_ROOT/common" checkout --detach "$COMMON_REV"
+          test "$(git -C "$KERNEL_ROOT/common" rev-parse HEAD)" = "$COMMON_REV"
 
       - name: 应用 Stock Config 伪装
         run: |
@@ -1458,6 +1472,22 @@ jobs:
             fi
           fi
 
+      - name: Integrate default-off PVR bridge observer
+        if: inputs.pvr_observe
+        env:
+          PVRO_BUILD_INPUTS: ${{ toJSON(inputs) }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/pvr-observation-evidence"
+          printf '%s\n' "$PVRO_BUILD_INPUTS" > "$GITHUB_WORKSPACE/pvr-observation-evidence/inputs.json"
+          python3 "$GITHUB_WORKSPACE/pvr-observe/make_patch.py" "$KERNEL_ROOT/common" > "$GITHUB_WORKSPACE/pvr-observation-evidence/observer.patch"
+          patch --dry-run -p1 -d "$KERNEL_ROOT/common" < "$GITHUB_WORKSPACE/pvr-observation-evidence/observer.patch"
+          patch -p1 -d "$KERNEL_ROOT/common" < "$GITHUB_WORKSPACE/pvr-observation-evidence/observer.patch"
+          git -C "$KERNEL_ROOT/common" diff --check -- fs/ioctl.c fs/Makefile BUILD.bazel
+          cd "$KERNEL_ROOT"
+          repo manifest -r -o "$GITHUB_WORKSPACE/pvr-observation-evidence/resolved-manifest.xml"
+          python3 "$GITHUB_WORKSPACE/pvr-observe/collect_evidence.py" "$KERNEL_ROOT" "$GITHUB_WORKSPACE/pvr-observation-evidence" --source-only
+
       - name: 编译内核
         id: compile_kernel
         uses: nick-fields/retry@v4
@@ -1529,6 +1559,22 @@ jobs:
               echo "退出码: $BUILD_STATUS"
             } >> "$LOG_FILE"
             exit "$BUILD_STATUS"
+
+      - name: Collect real config and symbol evidence
+        if: inputs.pvr_observe && steps.compile_kernel.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/pvr-observe/collect_evidence.py" "$KERNEL_ROOT" "$GITHUB_WORKSPACE/pvr-observation-evidence"
+
+      - name: Upload PVR observation evidence
+        if: always() && inputs.pvr_observe
+        uses: actions/upload-artifact@v6
+        with:
+          name: PVR-Observation-Evidence-${{ github.run_id }}
+          path: pvr-observation-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+          compression-level: 9
 
       - name: 整理编译失败日志
         if: ${{ always() && steps.compile_kernel.outcome == 'failure' }}

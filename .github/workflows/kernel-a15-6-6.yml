@@ -68,6 +68,12 @@ on:
         type: string
         default: "Sun Dec 01 08:10:00 UTC 2024"
 
+      pvr_observe:
+        description: "Include default-off PVR observer on this branch only"
+        required: false
+        type: boolean
+        default: false
+
       # ==================== 开关（默认关闭） ====================
       use_zram:
         description: "启用 ZRAM 增强算法"
@@ -111,6 +117,10 @@ on:
         default: false
   workflow_call:
     inputs:
+      pvr_observe:
+        required: false
+        type: boolean
+        default: false
       kernelsu_variant:
         required: true
         type: string
@@ -188,6 +198,7 @@ jobs:
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
+      pvr_observe: ${{ inputs.pvr_observe || false }}
       android_version: "android15"
       kernel_version: "6.6"
       sub_level: ${{ matrix.sub_level }}

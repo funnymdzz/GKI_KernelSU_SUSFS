@@ -1,0 +1,44 @@
+{
+  "original_run": "https://github.com/funnymdzz/GKI_KernelSU_SUSFS/actions/runs/36745056482",
+  "workflow_commit": "2084508342acc6c6ba248fa8a246d47892741221",
+  "reference_common_revision_from_original_log": "9219fdbf541af7cadec566a17df0c3e6b1a0be52",
+  "common_branch": "android15-6.6-2026-04",
+  "common_branch_observed_now": "2d963f6437daae36d8a6a14f7a561db28963c4d8",
+  "original_artifact_id": 11112484814,
+  "inputs": {
+    "android_version": "android15",
+    "kernel_version": "6.6",
+    "sub_level": "127",
+    "os_patch_level": "2026-04",
+    "kernelsu_variant": "ReSukiSU",
+    "ksu_mode": "关闭",
+    "version": "hachimidingdongjiccb",
+    "build_time": "N",
+    "use_zram": false,
+    "use_bbg": false,
+    "use_kpm": "disabled (关闭)",
+    "use_rekernel": false,
+    "use_nomount": false,
+    "use_networking": true,
+    "cve_2026_43499_patch": false,
+    "supp_op": false,
+    "droidspaces": "678",
+    "droidspaces_ntsync": true
+  },
+  "constraints": {
+    "vendor_dlkm_changes": false,
+    "new_exported_symbols": false,
+    "exported_struct_layout_changes": false,
+    "observer_runtime_default": "disabled",
+    "blind_gpu_mmio": false,
+    "automatic_flashing": false,
+    "force_module_loading": false
+  },
+  "validation_required": [
+    "pin common revision rather than rebuilding moving monthly branch",
+    "record resolved source commits including third-party patches",
+    "export actual build .config instead of stock config_data",
+    "export Module.symvers and compare vendor-imported symbol CRCs",
+    "document boundary: kernel-only ioctl recorder cannot read private KMD final CCB without verified probe schema"
+  ]
+}
