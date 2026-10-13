@@ -466,7 +466,7 @@ jobs:
           set -euo pipefail
           test '${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}' = 'android15-6.6-127'
           COMMON_REV=9219fdbf541af7cadec566a17df0c3e6b1a0be52
-          git -C "$KERNEL_ROOT/common" fetch --depth=1 origin "$COMMON_REV"
+          git -C "$KERNEL_ROOT/common" fetch --depth=1 https://android.googlesource.com/kernel/common "$COMMON_REV"
           git -C "$KERNEL_ROOT/common" checkout --detach "$COMMON_REV"
           test "$(git -C "$KERNEL_ROOT/common" rev-parse HEAD)" = "$COMMON_REV"
 
