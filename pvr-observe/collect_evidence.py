@@ -18,11 +18,14 @@ REQUIRED_CONFIGS = (
 )
 
 
-def validate_feature_config(contents):
+def validate_feature_config(contents, enable_susfs=True):
     lines = set(contents.decode().splitlines())
-    missing = [key for key in REQUIRED_CONFIGS if key + "=y" not in lines]
+    required = [key for key in REQUIRED_CONFIGS if enable_susfs or key != "CONFIG_KSU_SUSFS"]
+    missing = [key for key in required if key + "=y" not in lines]
     if missing:
         raise ValueError(f"Missing required observer/root/container features: {missing}")
+    if not enable_susfs and "CONFIG_KSU_SUSFS=y" in lines:
+        raise ValueError("SUSFS is enabled despite the requested disabled-SUSFS build")
 
 
 def validate_inputs(output):
@@ -34,7 +37,10 @@ def validate_inputs(output):
         "pvr-observation-baseline.json").read_text())["inputs"]
     expected = {("ksu_variant" if key == "kernelsu_variant" else key): value
                 for key, value in baseline.items()}
-    expected.update(enable_susfs=True, export_susfs_patches=False,
+    without_susfs = inputs.get("ksu_mode") == "禁用SUSFS"
+    if without_susfs:
+        expected["ksu_mode"] = "禁用SUSFS"
+    expected.update(enable_susfs=not without_susfs, export_susfs_patches=False,
                     artifact_upload_mode="仅上传 AnyKernel3.zip", revision="r1",
                     pvr_observe=True)
     mismatch = {key: {"expected": value, "actual": inputs.get(key)}
@@ -47,7 +53,7 @@ def collect_sources(kernel, output):
     validate_inputs(output)
     workspace = kernel.parent
     repositories = {}
-    candidates = [workspace, kernel / "common"]
+    candidates = [workspace, kernel / "common", Path("/tmp/Droidspaces-OSS")]
     candidates.extend(p for p in workspace.iterdir() if p.is_dir() and not p.name.startswith("."))
     candidates.extend(p for p in kernel.iterdir() if p.is_dir() and not p.name.startswith("."))
     for path in candidates:
@@ -81,6 +87,8 @@ def collect_outputs(kernel, output):
              kernel / "out/android15-6.6/dist"]
     inventory = []
     found = set()
+    inputs_path = output / "inputs.json"
+    enable_susfs = json.loads(inputs_path.read_text())["enable_susfs"] if inputs_path.is_file() else True
     for index, root in enumerate(roots):
         for name in (".config", "Module.symvers", "vmlinux.symvers", "kernel.release", "System.map"):
             source = root / name
@@ -94,7 +102,7 @@ def collect_outputs(kernel, output):
                               "sha256": hashlib.sha256(contents).hexdigest(), "bytes": len(contents)})
             found.add(name)
             if name == ".config":
-                validate_feature_config(contents)
+                validate_feature_config(contents, enable_susfs=enable_susfs)
     (output / "build-output-inventory.json").write_text(json.dumps(inventory, indent=2) + "\n")
     missing = {".config"} - found
     if not ({"Module.symvers", "vmlinux.symvers"} & found):

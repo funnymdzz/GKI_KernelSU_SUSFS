@@ -641,7 +641,14 @@ jobs:
               ;;
             "ReSukiSU")
               echo "添加 ReSukiSU..."
-              curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash $BRANCH
+              if [ "${{ inputs.pvr_observe }}" = "true" ]; then
+                KSU_REV="83850e8e93c5f7cfaec69cf03707f13e799df36a"
+                curl --fail -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/$KSU_REV/kernel/setup.sh" -o "$RUNNER_TEMP/pvr-baseline-ksu-setup.sh"
+                bash "$RUNNER_TEMP/pvr-baseline-ksu-setup.sh" "$KSU_REV"
+                test "$(git -C KernelSU rev-parse HEAD)" = "$KSU_REV"
+              else
+                curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash $BRANCH
+              fi
               ;;
             *)
               if [ -z "$LEGACY_SUKISU_CONFIG" ]; then
