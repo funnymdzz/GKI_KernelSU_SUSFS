@@ -5,6 +5,7 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kdev_t.h>
+#include <linux/kernel.h>
 #include <linux/ktime.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
@@ -44,6 +45,53 @@ static u32 pvro_used, pvro_active;
 static u64 pvro_sequence, pvro_lost;
 static unsigned int pvro_pid, pvro_major, pvro_minor;
 static bool pvro_enabled;
+/* Separate opt-in reference-ABI snapshots; never change the bridge v1 stream. */
+static bool pvro_commands_enabled;
+static void *pvro_commands_buffer;
+static u32 pvro_commands_used;
+static u64 pvro_commands_lost;
+
+static void pvro_capture_commands(struct pvro_transaction *tx, const void *input)
+{
+	static const u32 pointers[] = { 0x78, 0x68, 0x70 };
+	static const u32 lengths[] = { 0xf8, 0xc0, 0xc4 };
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(pointers); i++) {
+		struct pvro_record record = {
+			.magic = 0x4f525650, .version = 2, .phase = i + 2,
+			.sequence = tx->sequence, .timestamp_ns = ktime_get_ns(),
+			.tgid = tx->tgid, .tid = tx->tid, .command = PVRO_IOCTL,
+			.group = tx->bridge.group, .function = tx->bridge.function,
+		};
+		u32 length;
+		void *payload;
+
+		/* memcpy avoids unaligned loads; this mode is LP64 little-endian only. */
+		memcpy(&record.user_address, (const char *)input + pointers[i], 8);
+		memcpy(&record.requested, (const char *)input + lengths[i], 4);
+		length = min(record.requested, PVRO_LIMIT);
+		if (length != record.requested)
+			record.flags |= PVRO_SHORT;
+		if (PVRO_CAPACITY - pvro_commands_used < sizeof(record) + length) {
+			pvro_commands_lost++;
+			continue;
+		}
+		payload = (char *)pvro_commands_buffer + pvro_commands_used + sizeof(record);
+		memset(payload, 0, length);
+		if (length && copy_from_user(payload,
+				(void __user *)(unsigned long)record.user_address, length)) {
+			memset(payload, 0, length);
+			record.flags |= PVRO_COPY_ERROR;
+		} else {
+			record.captured = length;
+		}
+		record.bytes = sizeof(record) + length;
+		memcpy((char *)pvro_commands_buffer + pvro_commands_used,
+		       &record, sizeof(record));
+		pvro_commands_used += record.bytes;
+	}
+}
 
 static void pvro_append(struct pvro_transaction *tx, u32 phase, long result)
 {
@@ -63,6 +111,9 @@ static void pvro_append(struct pvro_transaction *tx, u32 phase, long result)
 		record.flags |= PVRO_SHORT;
 	if (PVRO_CAPACITY - pvro_used < sizeof(record) + length) {
 		pvro_lost++;
+		if (!phase && pvro_commands_enabled && tx->bridge.group == 130 &&
+		    tx->bridge.function == 10)
+			pvro_commands_lost++;
 		return;
 	}
 	payload = (char *)pvro_buffer + pvro_used + sizeof(record);
@@ -77,6 +128,13 @@ static void pvro_append(struct pvro_transaction *tx, u32 phase, long result)
 	record.bytes = sizeof(record) + length;
 	memcpy((char *)pvro_buffer + pvro_used, &record, sizeof(record));
 	pvro_used += record.bytes;
+	if (!phase && pvro_commands_enabled && tx->bridge.group == 130 &&
+	    tx->bridge.function == 10) {
+		if (record.requested == 256 && record.captured == 256 && !record.flags)
+			pvro_capture_commands(tx, payload);
+		else
+			pvro_commands_lost++;
+	}
 }
 
 struct pvro_transaction *pvro_begin(struct file *file, unsigned int cmd,
@@ -128,16 +186,17 @@ void pvro_end(struct pvro_transaction *tx, long result)
 static ssize_t pvro_control_read(struct file *file, char __user *data,
 				size_t length, loff_t *offset)
 {
-	char status[256];
+	char status[384];
 	int size;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	mutex_lock(&pvro_lock);
 	size = scnprintf(status, sizeof(status),
-		"enabled=%u pid=%u major=%u minor=%u bytes=%u active=%u lost=%llu limit=%u capacity=%u abi=lp64-drm32\n",
+		"enabled=%u pid=%u major=%u minor=%u bytes=%u active=%u lost=%llu limit=%u capacity=%u abi=lp64-drm32 commands=%u command_bytes=%u command_lost=%llu command_schema=ddk25.3-volcanic-lp64-le\n",
 		pvro_enabled, pvro_pid, pvro_major, pvro_minor, pvro_used,
-		pvro_active, pvro_lost, PVRO_LIMIT, PVRO_CAPACITY);
+		pvro_active, pvro_lost, PVRO_LIMIT, PVRO_CAPACITY,
+		pvro_commands_enabled, pvro_commands_used, pvro_commands_lost);
 	mutex_unlock(&pvro_lock);
 	return simple_read_from_buffer(data, length, offset, status, size);
 }
@@ -165,6 +224,15 @@ static ssize_t pvro_control_write(struct file *file, const char __user *data,
 		} else {
 			pvro_used = 0;
 			pvro_lost = 0;
+			pvro_commands_used = 0;
+			pvro_commands_lost = 0;
+		}
+	} else if (sysfs_streq(command, "commands on") ||
+		   sysfs_streq(command, "commands off")) {
+		if (pvro_enabled || pvro_active || pvro_used || pvro_commands_used) {
+			result = -EBUSY;
+		} else {
+			pvro_commands_enabled = sysfs_streq(command, "commands on");
 		}
 	} else if (sscanf(command, "start %u %u %u %c", &pid, &major, &minor,
 			  &trailing) == 3 && pid && major &&
@@ -177,6 +245,12 @@ static ssize_t pvro_control_write(struct file *file, const char __user *data,
 		if (!pvro_buffer)
 			pvro_buffer = vzalloc(PVRO_CAPACITY);
 		if (!pvro_buffer) {
+			result = -ENOMEM;
+			goto out;
+		}
+		if (pvro_commands_enabled && !pvro_commands_buffer)
+			pvro_commands_buffer = vzalloc(PVRO_CAPACITY);
+		if (pvro_commands_enabled && !pvro_commands_buffer) {
 			result = -ENOMEM;
 			goto out;
 		}
@@ -209,6 +283,28 @@ static ssize_t pvro_data_read(struct file *file, char __user *data,
 	return result;
 }
 
+static ssize_t pvro_commands_read(struct file *file, char __user *data,
+				 size_t length, loff_t *offset)
+{
+	ssize_t result;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	mutex_lock(&pvro_lock);
+	if (pvro_enabled || pvro_active)
+		result = -EBUSY;
+	else
+		result = simple_read_from_buffer(data, length, offset,
+					pvro_commands_buffer, pvro_commands_used);
+	mutex_unlock(&pvro_lock);
+	return result;
+}
+
+static const struct file_operations pvro_commands_ops = {
+	.read = pvro_commands_read,
+	.llseek = default_llseek,
+};
+
 static const struct file_operations pvro_control_ops = {
 	.read = pvro_control_read,
 	.write = pvro_control_write,
@@ -227,6 +323,7 @@ static int __init pvro_init(void)
 		return 0;
 	debugfs_create_file("control", 0600, directory, NULL, &pvro_control_ops);
 	debugfs_create_file("records", 0400, directory, NULL, &pvro_data_ops);
+	debugfs_create_file("commands", 0400, directory, NULL, &pvro_commands_ops);
 	return 0;
 }
 late_initcall(pvro_init);
